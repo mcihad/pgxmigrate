@@ -40,7 +40,7 @@ DROP TABLE users;
 
 ## CLI
 
-CLI `.env` dosyasini otomatik okur. Baglanti icin once `--database-url`, sonra `DATABASE_URL`, sonra `DB_URL`, en son `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME/DB_SSLMODE` kullanilir.
+CLI `.env` dosyasini otomatik okur. Baglanti icin once `--database-url`, sonra `DATABASE_URL`, sonra `DB_URL`, en son `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME/DB_SSLMODE` kullanilir. `DB_SCHEMA` tanimlanmissa tum sorgular o sema uzerinde calisir (`search_path` ayarlanir).
 
 ```bash
 pgxmigrate create create_users

@@ -321,7 +321,15 @@ func newPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		databaseURL = defaultDatabaseURL()
 	}
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("postgres baglantisi hazirlanamadi: %w", err)
+	}
+	if schema := os.Getenv("DB_SCHEMA"); schema != "" {
+		config.ConnConfig.RuntimeParams["search_path"] = schema
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("postgres baglantisi hazirlanamadi: %w", err)
 	}
