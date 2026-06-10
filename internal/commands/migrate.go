@@ -15,6 +15,7 @@ import (
 type migrateOptions struct {
 	dir         string
 	databaseURL string
+	schema      string
 }
 
 func NewMigrateCommand() *cobra.Command {
@@ -27,6 +28,7 @@ func NewMigrateCommand() *cobra.Command {
 
 	cmd.PersistentFlags().StringVar(&opts.dir, "dir", migrator.DefaultDirectory, "migration dosyalari dizini")
 	cmd.PersistentFlags().StringVar(&opts.databaseURL, "database-url", "", "postgres baglanti adresi")
+	cmd.PersistentFlags().StringVar(&opts.schema, "schema", "", "postgres sema adi (DB_SCHEMA env degiskenini gecer)")
 
 	cmd.AddCommand(createCommand(opts))
 	cmd.AddCommand(deleteCommand(opts))
@@ -296,13 +298,17 @@ func currentCommand(opts *migrateOptions) *cobra.Command {
 
 func withMigrator(opts *migrateOptions, fn func(context.Context, *migrator.Migrator, *cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		pool, err := newPool(cmd.Context(), opts.databaseURL)
+		schema := opts.schema
+		if schema == "" {
+			schema = os.Getenv("DB_SCHEMA")
+		}
+		pool, err := newPool(cmd.Context(), opts.databaseURL, schema)
 		if err != nil {
 			return err
 		}
 		defer pool.Close()
 
-		m := migrator.New(pool, opts.dir)
+		m := migrator.New(pool, opts.dir, migrator.WithSchema(schema))
 		if err := m.Ensure(cmd.Context()); err != nil {
 			return err
 		}
@@ -310,7 +316,7 @@ func withMigrator(opts *migrateOptions, fn func(context.Context, *migrator.Migra
 	}
 }
 
-func newPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+func newPool(ctx context.Context, databaseURL, schema string) (*pgxpool.Pool, error) {
 	if databaseURL == "" {
 		databaseURL = os.Getenv("DATABASE_URL")
 	}
@@ -325,7 +331,7 @@ func newPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres baglantisi hazirlanamadi: %w", err)
 	}
-	if schema := os.Getenv("DB_SCHEMA"); schema != "" {
+	if schema != "" {
 		config.ConnConfig.RuntimeParams["search_path"] = schema
 	}
 

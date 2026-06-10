@@ -25,8 +25,20 @@ const (
 var migrationFilePattern = regexp.MustCompile(`^(\d{14})_([a-z0-9_]+)\.sql$`)
 
 type Migrator struct {
-	pool *pgxpool.Pool
-	dir  string
+	pool   *pgxpool.Pool
+	dir    string
+	schema string
+}
+
+// Option, Migrator yapilandirma secenegi
+type Option func(*Migrator)
+
+// WithSchema, migration tablosunun olusturulacagi ve sorgulanacagi sema adi belirtir.
+// Ensure() cagrildigi zaman sema mevcut degilse otomatik olusturulur.
+func WithSchema(schema string) Option {
+	return func(m *Migrator) {
+		m.schema = schema
+	}
 }
 
 type Migration struct {
@@ -62,8 +74,12 @@ type appliedRecord struct {
 	dirty     bool
 }
 
-func New(pool *pgxpool.Pool, dir string) *Migrator {
-	return &Migrator{pool: pool, dir: dir}
+func New(pool *pgxpool.Pool, dir string, opts ...Option) *Migrator {
+	m := &Migrator{pool: pool, dir: dir}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 func (m *Migrator) Ensure(ctx context.Context) error {
@@ -72,6 +88,11 @@ func (m *Migrator) Ensure(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(m.dir, 0755); err != nil {
 		return fmt.Errorf("migrations dizini olusturulamadi: %w", err)
+	}
+	if m.schema != "" {
+		if _, err := m.pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{m.schema}.Sanitize()); err != nil {
+			return fmt.Errorf("schema olusturulamadi: %w", err)
+		}
 	}
 	_, err := m.pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (

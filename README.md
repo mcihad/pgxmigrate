@@ -40,7 +40,7 @@ DROP TABLE users;
 
 ## CLI
 
-CLI `.env` dosyasini otomatik okur. Baglanti icin once `--database-url`, sonra `DATABASE_URL`, sonra `DB_URL`, en son `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME/DB_SSLMODE` kullanilir. `DB_SCHEMA` tanimlanmissa tum sorgular o sema uzerinde calisir (`search_path` ayarlanir).
+CLI `.env` dosyasini otomatik okur. Baglanti icin once `--database-url`, sonra `DATABASE_URL`, sonra `DB_URL`, en son `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME/DB_SSLMODE` kullanilir. Sema icin `--schema` flag veya `DB_SCHEMA` ortam degiskeni kullanilabilir; ikisi de belirtilirse `--schema` onceliklidir. Sema tanimlanmissa tum sorgular o sema uzerinde calisir (`search_path` ayarlanir) ve sema mevcut degilse otomatik olusturulur.
 
 ```bash
 pgxmigrate create create_users
@@ -66,7 +66,10 @@ Ortak flag'ler:
 ```bash
 pgxmigrate --dir database/migrations status
 pgxmigrate --database-url "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" up
+pgxmigrate --schema myschema status
 ```
+
+`DB_SCHEMA` ortam degiskeni ya da `--schema` flag ile sema belirtilebilir; ikisi de ayarlanmissa `--schema` onceliklidir. Sema mevcut degilse otomatik olusturulur.
 
 `up` argumansiz calisirsa tum bekleyen migrationlari uygular. `down` argumansiz calisirsa son migrationi geri alir. `rollback` son batch'i geri alir. `force` SQL calistirmadan migration tablosunu hedef versiyona ayarlar.
 
@@ -94,6 +97,12 @@ func run(ctx context.Context, pool *pgxpool.Pool) error {
     _, err := m.Up(ctx, 0)
     return err
 }
+```
+
+Belirli bir sema kullanmak icin `WithSchema` secenegini kullanin. `Ensure()` semayı mevcut degilse otomatik olusturur:
+
+```go
+m := migrator.New(pool, migrator.DefaultDirectory, migrator.WithSchema("myschema"))
 ```
 
 Kullanilabilir API:
