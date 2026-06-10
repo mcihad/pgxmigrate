@@ -86,3 +86,17 @@ func TestValidateFilesReportsEmptySections(t *testing.T) {
 		t.Fatalf("expected 2 issues, got %d: %#v", len(issues), issues)
 	}
 }
+
+func TestMigrationTableDefaultSchema(t *testing.T) {
+	got := migrationTable("")
+	if got != `"schema_migrations"` {
+		t.Fatalf("unexpected migration table name: %q", got)
+	}
+}
+
+func TestMigrationTableCustomSchema(t *testing.T) {
+	got := migrationTable("auth")
+	if got != `"auth"."schema_migrations"` {
+		t.Fatalf("unexpected migration table name: %q", got)
+	}
+}

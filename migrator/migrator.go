@@ -94,19 +94,20 @@ func (m *Migrator) Ensure(ctx context.Context) error {
 			return fmt.Errorf("schema olusturulamadi: %w", err)
 		}
 	}
-	_, err := m.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
+	table := m.migrationTable()
+	_, err := m.pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
 			version text PRIMARY KEY,
 			name text NOT NULL,
 			batch integer NOT NULL DEFAULT 1,
 			dirty boolean NOT NULL DEFAULT false,
 			applied_at timestamptz NOT NULL DEFAULT now()
 		)
-	`)
+	`, table))
 	if err != nil {
 		return err
 	}
-	_, err = m.pool.Exec(ctx, "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS dirty boolean NOT NULL DEFAULT false")
+	_, err = m.pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS dirty boolean NOT NULL DEFAULT false", table))
 	return err
 }
 
@@ -161,16 +162,17 @@ func (m *Migrator) Up(ctx context.Context, steps int) ([]Run, error) {
 		return nil, fmt.Errorf("steps negatif olamaz")
 	}
 	var runs []Run
+	table := m.migrationTable()
 	err := m.withLock(ctx, func(tx pgx.Tx) error {
 		files, err := m.loadFiles()
 		if err != nil {
 			return err
 		}
-		applied, err := appliedMapTx(ctx, tx)
+		applied, err := appliedMapTx(ctx, tx, table)
 		if err != nil {
 			return err
 		}
-		batch, err := nextBatch(ctx, tx)
+		batch, err := nextBatch(ctx, tx, table)
 		if err != nil {
 			return err
 		}
@@ -187,7 +189,7 @@ func (m *Migrator) Up(ctx context.Context, steps int) ([]Run, error) {
 					return fmt.Errorf("%s up calismadi: %w", migration.Version, err)
 				}
 			}
-			if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version, name, batch, dirty) VALUES ($1, $2, $3, false)", migration.Version, migration.Name, batch); err != nil {
+			if _, err := tx.Exec(ctx, fmt.Sprintf("INSERT INTO %s (version, name, batch, dirty) VALUES ($1, $2, $3, false)", table), migration.Version, migration.Name, batch); err != nil {
 				return err
 			}
 			runs = append(runs, Run{Version: migration.Version, Name: migration.Name})
@@ -230,6 +232,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) ([]Run, error) {
 		return nil, fmt.Errorf("steps 1 veya daha buyuk olmali")
 	}
 	var runs []Run
+	table := m.migrationTable()
 	err := m.withLock(ctx, func(tx pgx.Tx) error {
 		files, err := m.loadFiles()
 		if err != nil {
@@ -240,7 +243,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) ([]Run, error) {
 			byVersion[migration.Version] = migration
 		}
 
-		rows, err := tx.Query(ctx, "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT $1", steps)
+		rows, err := tx.Query(ctx, fmt.Sprintf("SELECT version, name FROM %s ORDER BY version DESC LIMIT $1", table), steps)
 		if err != nil {
 			return err
 		}
@@ -271,7 +274,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) ([]Run, error) {
 					return fmt.Errorf("%s down calismadi: %w", version, err)
 				}
 			}
-			if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE version = $1", version); err != nil {
+			if _, err := tx.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE version = $1", table), version); err != nil {
 				return err
 			}
 			runs = append(runs, item)
@@ -283,7 +286,8 @@ func (m *Migrator) Down(ctx context.Context, steps int) ([]Run, error) {
 
 func (m *Migrator) Rollback(ctx context.Context) ([]Run, error) {
 	var batch int
-	err := m.pool.QueryRow(ctx, "SELECT COALESCE(MAX(batch), 0) FROM schema_migrations").Scan(&batch)
+	table := m.migrationTable()
+	err := m.pool.QueryRow(ctx, fmt.Sprintf("SELECT COALESCE(MAX(batch), 0) FROM %s", table)).Scan(&batch)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +296,7 @@ func (m *Migrator) Rollback(ctx context.Context) ([]Run, error) {
 	}
 
 	var count int
-	err = m.pool.QueryRow(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE batch = $1", batch).Scan(&count)
+	err = m.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE batch = $1", table), batch).Scan(&count)
 	if err != nil {
 		return nil, err
 	}
@@ -331,19 +335,20 @@ func (m *Migrator) Force(ctx context.Context, version string) ([]Run, error) {
 	}
 
 	var runs []Run
+	table := m.migrationTable()
 	err = m.withLock(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations"); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf("DELETE FROM %s", table)); err != nil {
 			return err
 		}
 		if index == -1 {
 			return nil
 		}
-		batch, err := nextBatch(ctx, tx)
+		batch, err := nextBatch(ctx, tx, table)
 		if err != nil {
 			return err
 		}
 		for _, migration := range files[:index+1] {
-			if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version, name, batch, dirty) VALUES ($1, $2, $3, false)", migration.Version, migration.Name, batch); err != nil {
+			if _, err := tx.Exec(ctx, fmt.Sprintf("INSERT INTO %s (version, name, batch, dirty) VALUES ($1, $2, $3, false)", table), migration.Version, migration.Name, batch); err != nil {
 				return err
 			}
 			runs = append(runs, Run{Version: migration.Version, Name: migration.Name})
@@ -468,7 +473,7 @@ func (m *Migrator) Validate(ctx context.Context) ([]ValidationIssue, error) {
 
 func (m *Migrator) Current(ctx context.Context) (string, error) {
 	var version string
-	err := m.pool.QueryRow(ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&version)
+	err := m.pool.QueryRow(ctx, fmt.Sprintf("SELECT version FROM %s ORDER BY version DESC LIMIT 1", m.migrationTable())).Scan(&version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -485,6 +490,11 @@ func (m *Migrator) withLock(ctx context.Context, fn func(pgx.Tx) error) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey); err != nil {
 		return err
 	}
+	if m.schema != "" {
+		if _, err := tx.Exec(ctx, "SET LOCAL search_path TO "+pgx.Identifier{m.schema}.Sanitize()); err != nil {
+			return err
+		}
+	}
 	if err := fn(tx); err != nil {
 		return err
 	}
@@ -492,7 +502,7 @@ func (m *Migrator) withLock(ctx context.Context, fn func(pgx.Tx) error) error {
 }
 
 func (m *Migrator) appliedMap(ctx context.Context) (map[string]*appliedRecord, error) {
-	rows, err := m.pool.Query(ctx, "SELECT version, applied_at, dirty FROM schema_migrations")
+	rows, err := m.pool.Query(ctx, fmt.Sprintf("SELECT version, applied_at, dirty FROM %s", m.migrationTable()))
 	if err != nil {
 		return nil, err
 	}
@@ -511,8 +521,8 @@ func (m *Migrator) appliedMap(ctx context.Context) (map[string]*appliedRecord, e
 	return applied, rows.Err()
 }
 
-func appliedMapTx(ctx context.Context, tx pgx.Tx) (map[string]*appliedRecord, error) {
-	rows, err := tx.Query(ctx, "SELECT version, applied_at, dirty FROM schema_migrations")
+func appliedMapTx(ctx context.Context, tx pgx.Tx, table string) (map[string]*appliedRecord, error) {
+	rows, err := tx.Query(ctx, "SELECT version, applied_at, dirty FROM "+table)
 	if err != nil {
 		return nil, err
 	}
@@ -531,10 +541,21 @@ func appliedMapTx(ctx context.Context, tx pgx.Tx) (map[string]*appliedRecord, er
 	return applied, rows.Err()
 }
 
-func nextBatch(ctx context.Context, tx pgx.Tx) (int, error) {
+func nextBatch(ctx context.Context, tx pgx.Tx, table string) (int, error) {
 	var batch int
-	err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(batch), 0) + 1 FROM schema_migrations").Scan(&batch)
+	err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(batch), 0) + 1 FROM "+table).Scan(&batch)
 	return batch, err
+}
+
+func (m *Migrator) migrationTable() string {
+	return migrationTable(m.schema)
+}
+
+func migrationTable(schema string) string {
+	if schema == "" {
+		return pgx.Identifier{"schema_migrations"}.Sanitize()
+	}
+	return pgx.Identifier{schema, "schema_migrations"}.Sanitize()
 }
 
 func (m *Migrator) loadFiles() ([]Migration, error) {
